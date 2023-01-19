@@ -1,5 +1,6 @@
-use std::io::{BufReader, BufRead, Seek, SeekFrom, Result};
+use std::io::{BufReader, BufRead, Write, Seek, SeekFrom, Result, ErrorKind::BrokenPipe};
 use std::fs::File;
+use std::process::exit;
 use clap::Parser;
 
 #[derive(Parser, Debug)]
@@ -51,7 +52,7 @@ fn line_parse(l: &str) -> Vec<String> {
 // Read the header line of the file,
 // return the position after we finish
 // and the Vec of Cols
-fn read_headers(reader: &mut BufReader<File>) -> Result<(Vec<Col>, u64)> {
+fn read_headers<T: BufRead>(reader: &mut T) -> Result<(Vec<Col>, u64)> {
     let mut cols: Vec<Col> = Vec::new();
     let mut headers = String::new();
     let header_bytes = reader.read_line(&mut headers)?;
@@ -61,7 +62,7 @@ fn read_headers(reader: &mut BufReader<File>) -> Result<(Vec<Col>, u64)> {
 }
 
 // Read the file, noting size and type of all the data
-fn analyze_rows(reader: &mut BufReader<File>, cols: &mut Vec<Col>) -> Result<()> {
+fn analyze_rows<T: BufRead>(reader: &mut T, cols: &mut Vec<Col>) -> Result<()> {
     let mut line_str = String::new();
     while let Ok(bytes) = reader.read_line(&mut line_str) {
         if bytes == 0 {
@@ -78,14 +79,17 @@ fn analyze_rows(reader: &mut BufReader<File>, cols: &mut Vec<Col>) -> Result<()>
     Ok(())
 }
 
-fn print_aligned_header(cols: &Vec<Col>) {
+fn print_aligned_header(cols: &Vec<Col>) -> Result<()>{
+    let mut stdout = std::io::stdout().lock();
     for col in cols {
-        print!("{:^-width$} ", col.name, width=col.max_length)
+        write!(stdout, "{:^-width$} ", col.name, width=col.max_length)?;
     }
-    println!("");
+    writeln!(stdout, "")?;
+    Ok(())
 }
 
-fn print_aligned_rows(reader: &mut BufReader<File>, cols: &Vec<Col>) -> Result<()> {
+fn print_aligned_rows<T: BufRead>(reader: &mut T, cols: &Vec<Col>) -> Result<()> {
+    let mut stdout = std::io::stdout().lock();
     let mut line_str = String::new();
     while let Ok(bytes) = reader.read_line(&mut line_str) {
         if bytes == 0 {
@@ -95,12 +99,12 @@ fn print_aligned_rows(reader: &mut BufReader<File>, cols: &Vec<Col>) -> Result<(
         for (i,value) in line.iter().enumerate() {
             let col = cols.get(i).unwrap();
             match col.kind {
-                ColType::Textual => print!("{:-width$} ", value, width=col.max_length),
-                ColType::Numeric => print!("{:>-width$} ", value, width=col.max_length),
+                ColType::Textual => write!(stdout, "{:-width$} ", value, width=col.max_length)?,
+                ColType::Numeric => write!(stdout, "{:>-width$} ", value, width=col.max_length)?,
             }
 
         }
-        println!("");
+        writeln!(stdout, "")?;
         line_str.truncate(0);
     }
     Ok(())
@@ -109,7 +113,13 @@ fn print_aligned_rows(reader: &mut BufReader<File>, cols: &Vec<Col>) -> Result<(
 fn main() -> std::io::Result<()> {
     let args = Args::parse();
 
-    let file = File::open(args.filename)?;
+    let file = match File::open(args.filename) {
+        Ok(file) => file,
+        Err(err) => {
+            eprintln!("Could no open file: {}", err);
+            exit(1);
+        }
+    };
     let mut reader = BufReader::new(file);
 
     // Read the first line, set up your cols
@@ -117,11 +127,22 @@ fn main() -> std::io::Result<()> {
 
     let _position = analyze_rows(&mut reader, &mut cols);
 
-    print_aligned_header(&cols);
+    print_aligned_header(&cols)?;
 
     //Seek back to the data portion and print it out nicely
     reader.seek(SeekFrom::Start (header_bytes as u64))?;
-    print_aligned_rows(&mut reader, &cols)?;
+    match print_aligned_rows(&mut reader, &cols) {
+        Ok(()) => (),
+        Err(err) => {
+            match err.kind() {
+                BrokenPipe => exit(0),
+                _ => {
+                    eprintln!("Failed writing output: {}", err.kind());
+                    exit(1);
+                }
+            }
+        }
+    };
 
     Ok(())
 }
