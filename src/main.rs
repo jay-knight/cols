@@ -1,4 +1,13 @@
-use std::io::{BufReader, BufRead, Write, Seek, SeekFrom, Result, ErrorKind::BrokenPipe};
+use std::io::{
+    stdout,
+    BufReader,
+    BufRead,
+    Write,
+    Seek,
+    SeekFrom,
+    Result,
+    ErrorKind::BrokenPipe,
+};
 use std::fs::File;
 use std::process::exit;
 use clap::Parser;
@@ -15,6 +24,8 @@ enum ColType {
     Numeric,
 }
 
+use ColType::*;
+
 #[derive(Debug)]
 struct Col {
     name: String,
@@ -26,7 +37,7 @@ impl Col {
     fn new(name: &str) -> Self {
         Col {
             name: String::from(name.trim()),
-            kind: ColType::Numeric,
+            kind: Numeric,
             max_length: name.len(),
         }
     }
@@ -34,11 +45,11 @@ impl Col {
     fn update(&mut self, value: &str) {
         self.max_length = std::cmp::max(self.max_length, value.len());
         self.kind = match self.kind {
-            ColType::Textual => ColType::Textual,
-            ColType::Numeric => {
+            Textual => Textual,
+            Numeric => {
                 match value.parse::<f64>() {
-                    Ok(_) => ColType::Numeric,
-                    Err(_) => ColType::Textual,
+                    Ok(_) => Numeric,
+                    Err(_) => Textual,
                 }
             }
         }
@@ -80,7 +91,7 @@ fn analyze_rows<T: BufRead>(reader: &mut T, cols: &mut Vec<Col>) -> Result<()> {
 }
 
 fn print_aligned_header(cols: &Vec<Col>) -> Result<()>{
-    let mut stdout = std::io::stdout().lock();
+    let mut stdout = stdout().lock();
     for col in cols {
         write!(stdout, "{:^-width$} ", col.name, width=col.max_length)?;
     }
@@ -89,7 +100,7 @@ fn print_aligned_header(cols: &Vec<Col>) -> Result<()>{
 }
 
 fn print_aligned_rows<T: BufRead>(reader: &mut T, cols: &Vec<Col>) -> Result<()> {
-    let mut stdout = std::io::stdout().lock();
+    let mut stdout = stdout().lock();
     let mut line_str = String::new();
     while let Ok(bytes) = reader.read_line(&mut line_str) {
         if bytes == 0 {
@@ -99,8 +110,8 @@ fn print_aligned_rows<T: BufRead>(reader: &mut T, cols: &Vec<Col>) -> Result<()>
         for (i,value) in line.iter().enumerate() {
             let col = cols.get(i).unwrap();
             match col.kind {
-                ColType::Textual => write!(stdout, "{:-width$} ", value, width=col.max_length)?,
-                ColType::Numeric => write!(stdout, "{:>-width$} ", value, width=col.max_length)?,
+                Textual => write!(stdout, "{:-width$} ", value, width=col.max_length)?,
+                Numeric => write!(stdout, "{:>-width$} ", value, width=col.max_length)?,
             }
 
         }
@@ -110,7 +121,7 @@ fn print_aligned_rows<T: BufRead>(reader: &mut T, cols: &Vec<Col>) -> Result<()>
     Ok(())
 }
 
-fn main() -> std::io::Result<()> {
+fn main() -> Result<()> {
     let args = Args::parse();
 
     let file = match File::open(args.filename) {
