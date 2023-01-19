@@ -1,4 +1,4 @@
-use std::io::{BufReader, BufRead, Seek, SeekFrom};
+use std::io::{BufReader, BufRead, Seek, SeekFrom, Result};
 use std::fs::File;
 use clap::Parser;
 
@@ -48,22 +48,20 @@ fn line_parse(l: &str) -> Vec<String> {
     l.split("\t").map(|s| String::from(s.trim())).collect::<Vec<String>>()
 }
 
-fn main() -> std::io::Result<()> {
-    let args = Args::parse();
-
-    let file = File::open(args.filename)?;
-    let mut reader = BufReader::new(file);
-    //let mut lines = reader.by_ref().lines();
-
+// Read the header line of the file,
+// return the position after we finish
+// and the Vec of Cols
+fn read_headers(reader: &mut BufReader<File>) -> Result<(Vec<Col>, u64)> {
     let mut cols: Vec<Col> = Vec::new();
-
-    // Read the first line, set up your cols
     let mut headers = String::new();
-    let _header_bytes = reader.read_line(&mut headers)?;
+    let header_bytes = reader.read_line(&mut headers)?;
     let headers = line_parse(&headers);
     cols.extend(headers.iter().map(|h| Col::new(h)));
+    Ok((cols, header_bytes as u64))
+}
 
-    // Read the file, noting size and type of all the data
+// Read the file, noting size and type of all the data
+fn analyze_rows(reader: &mut BufReader<File>, cols: &mut Vec<Col>) -> Result<()> {
     let mut line_str = String::new();
     while let Ok(bytes) = reader.read_line(&mut line_str) {
         if bytes == 0 {
@@ -77,9 +75,17 @@ fn main() -> std::io::Result<()> {
         }
         line_str = String::new();
     }
+    Ok(())
+}
 
-    //Seek back to the data portion and print it out nicely
-    let _ = reader.seek(SeekFrom::Start (0u64))?;
+fn print_aligned_header(cols: &Vec<Col>) {
+    for col in cols {
+        print!("{:^-width$} ", col.name, width=col.max_length)
+    }
+    println!("");
+}
+
+fn print_aligned_rows(reader: &mut BufReader<File>, cols: &Vec<Col>) -> Result<()> {
     let mut line_str = String::new();
     while let Ok(bytes) = reader.read_line(&mut line_str) {
         if bytes == 0 {
@@ -97,6 +103,25 @@ fn main() -> std::io::Result<()> {
         println!("");
         line_str.truncate(0);
     }
+    Ok(())
+}
+
+fn main() -> std::io::Result<()> {
+    let args = Args::parse();
+
+    let file = File::open(args.filename)?;
+    let mut reader = BufReader::new(file);
+
+    // Read the first line, set up your cols
+    let (mut cols, header_bytes) = read_headers(&mut reader)?;
+
+    let _position = analyze_rows(&mut reader, &mut cols);
+
+    print_aligned_header(&cols);
+
+    //Seek back to the data portion and print it out nicely
+    reader.seek(SeekFrom::Start (header_bytes as u64))?;
+    print_aligned_rows(&mut reader, &cols)?;
 
     Ok(())
 }
