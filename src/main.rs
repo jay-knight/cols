@@ -124,14 +124,13 @@ fn print_aligned_rows<T: BufRead>(reader: &mut T, cols: &Vec<Col>) -> Result<()>
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    let file = match File::open(args.filename) {
+    let mut reader = match File::open(args.filename).map(BufReader::new) {
         Ok(file) => file,
         Err(err) => {
             eprintln!("Could no open file: {}", err);
             exit(1);
         }
     };
-    let mut reader = BufReader::new(file);
 
     // Read the first line, set up your cols
     let (mut cols, header_bytes) = read_headers(&mut reader)?;
