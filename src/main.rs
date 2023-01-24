@@ -46,7 +46,7 @@ impl Col {
 }
 
 fn line_parse(l: &str) -> Vec<String> {
-    l.split("\t")
+    l.split('\t')
         .map(|s| String::from(s.trim()))
         .collect::<Vec<String>>()
 }
@@ -64,7 +64,7 @@ fn read_headers<T: BufRead>(reader: &mut T) -> Result<(Vec<Col>, u64)> {
 }
 
 // Read the file, noting size and type of all the data
-fn analyze_rows<T: BufRead>(reader: &mut T, cols: &mut Vec<Col>) -> Result<()> {
+fn analyze_rows<T: BufRead>(reader: &mut T, cols: &mut [Col]) -> Result<()> {
     let mut line_str = String::new();
     while let Ok(bytes) = reader.read_line(&mut line_str) {
         if bytes == 0 {
@@ -81,16 +81,16 @@ fn analyze_rows<T: BufRead>(reader: &mut T, cols: &mut Vec<Col>) -> Result<()> {
     Ok(())
 }
 
-fn print_aligned_header(cols: &Vec<Col>) -> Result<()> {
+fn print_aligned_header(cols: &[Col]) -> Result<()> {
     let mut stdout = stdout().lock();
     for col in cols {
         write!(stdout, "{:^-width$} ", col.name, width = col.max_length)?;
     }
-    writeln!(stdout, "")?;
+    writeln!(stdout)?;
     Ok(())
 }
 
-fn print_aligned_rows<T: BufRead>(reader: &mut T, cols: &Vec<Col>) -> Result<()> {
+fn print_aligned_rows<T: BufRead>(reader: &mut T, cols: &[Col]) -> Result<()> {
     let mut stdout = stdout().lock();
     let mut line_str = String::new();
     while let Ok(bytes) = reader.read_line(&mut line_str) {
@@ -105,7 +105,7 @@ fn print_aligned_rows<T: BufRead>(reader: &mut T, cols: &Vec<Col>) -> Result<()>
                 Numeric => write!(stdout, "{:>-width$} ", value, width = col.max_length)?,
             }
         }
-        writeln!(stdout, "")?;
+        writeln!(stdout)?;
         line_str.truncate(0);
     }
     Ok(())
@@ -130,7 +130,7 @@ fn main() -> Result<()> {
     print_aligned_header(&cols)?;
 
     //Seek back to the data portion and print it out nicely
-    reader.seek(SeekFrom::Start(header_bytes as u64))?;
+    reader.seek(SeekFrom::Start(header_bytes))?;
     match print_aligned_rows(&mut reader, &cols) {
         Ok(()) => (),
         Err(err) => match err.kind() {
