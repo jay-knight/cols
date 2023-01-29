@@ -22,23 +22,23 @@ struct Args {
 }
 
 #[derive(Debug)]
-enum ColType {
+enum ColumnType {
     Textual,
     Numeric,
 }
 
-use ColType::*;
+use ColumnType::*;
 
 #[derive(Debug)]
-struct Col {
+struct Column {
     name: String,
-    kind: ColType,
+    kind: ColumnType,
     max_length: usize,
 }
 
-impl Col {
+impl Column {
     fn new(name: &str) -> Self {
-        Col {
+        Column {
             name: String::from(name.trim()),
             kind: Numeric,
             max_length: name.len(),
@@ -57,6 +57,10 @@ impl Col {
     }
 }
 
+struct DelimitedFile {
+    cols: Vec<Column>
+}
+
 fn line_parse(l: &str) -> Vec<String> {
     l.split('\t')
         .map(|s| String::from(s.trim()))
@@ -65,18 +69,18 @@ fn line_parse(l: &str) -> Vec<String> {
 
 // Read the header line of the file,
 // return the position after we finish
-// and the Vec of Cols
-fn read_headers<T: BufRead>(reader: &mut T) -> Result<(Vec<Col>, u64)> {
-    let mut cols: Vec<Col> = Vec::new();
+// and the Vec of Columns
+fn read_headers<T: BufRead>(reader: &mut T) -> Result<(Vec<Column>, u64)> {
+    let mut cols: Vec<Column> = Vec::new();
     let mut headers = String::new();
     let header_bytes = reader.read_line(&mut headers)?;
     let headers = line_parse(&headers);
-    cols.extend(headers.iter().map(|h| Col::new(h)));
+    cols.extend(headers.iter().map(|h| Column::new(h)));
     Ok((cols, header_bytes as u64))
 }
 
 // Read the file, noting size and type of all the data
-fn analyze_rows<T: BufRead>(reader: &mut T, cols: &mut [Col]) -> Result<()> {
+fn analyze_rows<T: BufRead>(reader: &mut T, cols: &mut [Column]) -> Result<()> {
     let mut line_str = String::new();
     while let Ok(bytes) = reader.read_line(&mut line_str) {
         if bytes == 0 {
@@ -93,7 +97,7 @@ fn analyze_rows<T: BufRead>(reader: &mut T, cols: &mut [Col]) -> Result<()> {
     Ok(())
 }
 
-fn print_aligned_header(cols: &[Col]) -> Result<()> {
+fn print_aligned_header(cols: &[Column]) -> Result<()> {
     let mut stdout = stdout().lock();
     for col in cols {
         write!(stdout, "{}┼", "─".repeat(col.max_length))?;
@@ -112,7 +116,7 @@ fn print_aligned_header(cols: &[Col]) -> Result<()> {
 
 fn print_aligned_rows<T: BufRead>(
         reader: &mut T,
-        cols: &[Col],
+        cols: &[Column],
         header_repeat: Option<u16>,
     ) -> Result<()> {
     let mut stdout = stdout().lock();
