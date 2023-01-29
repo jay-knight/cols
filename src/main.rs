@@ -1,12 +1,24 @@
+extern crate termsize;
+
 use clap::Parser;
 use std::fs::File;
 use std::io::{stdout, BufRead, BufReader, ErrorKind::BrokenPipe, Result, Seek, SeekFrom, Write};
 use std::process::exit;
 
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version, about, long_about = "A cool program")]
 struct Args {
     filename: String,
+
+    #[arg(short='r', long, default_value_t=25)]
+    header_repeat: u16,
+
+    #[arg(short='m', long, default_value_t=25)]
+    max_value_length: u16,
+
+    #[arg(short, long)]
+    line_numbers: bool,
+
 }
 
 #[derive(Debug)]
@@ -84,25 +96,48 @@ fn analyze_rows<T: BufRead>(reader: &mut T, cols: &mut [Col]) -> Result<()> {
 fn print_aligned_header(cols: &[Col]) -> Result<()> {
     let mut stdout = stdout().lock();
     for col in cols {
-        write!(stdout, "{:^-width$} ", col.name, width = col.max_length)?;
+        write!(stdout, "{}┼", "─".repeat(col.max_length))?;
+    }
+    writeln!(stdout)?;
+    for col in cols {
+        write!(stdout, "{:-width$}│", col.name, width = col.max_length)?;
+    }
+    writeln!(stdout)?;
+    for col in cols {
+        write!(stdout, "{}┼", "─".repeat(col.max_length))?;
     }
     writeln!(stdout)?;
     Ok(())
 }
 
-fn print_aligned_rows<T: BufRead>(reader: &mut T, cols: &[Col]) -> Result<()> {
+fn print_aligned_rows<T: BufRead>(
+        reader: &mut T,
+        cols: &[Col],
+        header_repeat: Option<u16>,
+    ) -> Result<()> {
     let mut stdout = stdout().lock();
     let mut line_str = String::new();
+    let mut line_num = 0u16;
+
     while let Ok(bytes) = reader.read_line(&mut line_str) {
         if bytes == 0 {
             break;
         }
+        line_num += 1;
+        match header_repeat {
+            Some(hr) => if line_num % hr == 0 {
+                print_aligned_header(&cols)?;
+                ()
+            },
+            None => ()
+        }
+
         let line = line_parse(&line_str);
         for (i, value) in line.iter().enumerate() {
             let col = cols.get(i).unwrap();
             match col.kind {
-                Textual => write!(stdout, "{:-width$} ", value, width = col.max_length)?,
-                Numeric => write!(stdout, "{:>-width$} ", value, width = col.max_length)?,
+                Textual => write!(stdout, "{:-width$}│", value, width = col.max_length)?,
+                Numeric => write!(stdout, "{:>-width$}│", value, width = col.max_length)?,
             }
         }
         writeln!(stdout)?;
@@ -113,6 +148,11 @@ fn print_aligned_rows<T: BufRead>(reader: &mut T, cols: &[Col]) -> Result<()> {
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    println!("{:?}", args);
+    let rows = match termsize::get() {
+        Some(size) => Some(size.rows),
+        None => Some(args.header_repeat),
+    };
 
     let mut reader = match File::open(args.filename).map(BufReader::new) {
         Ok(file) => file,
@@ -131,7 +171,7 @@ fn main() -> Result<()> {
 
     //Seek back to the data portion and print it out nicely
     reader.seek(SeekFrom::Start(header_bytes))?;
-    match print_aligned_rows(&mut reader, &cols) {
+    match print_aligned_rows(&mut reader, &cols, rows) {
         Ok(()) => (),
         Err(err) => match err.kind() {
             BrokenPipe => exit(0),
