@@ -10,15 +10,23 @@ use std::process::exit;
 struct Args {
     filename: String,
 
-    #[arg(short='r', long, default_value_t=25)]
+    #[arg(short = 'r', long, default_value_t = 25)]
     header_repeat: u16,
 
-    #[arg(short='m', long, default_value_t=25)]
-    max_value_length: u16,
+    #[arg(short = 'R', long)]
+    no_header_repeat: bool,
 
-    #[arg(short, long)]
+    #[arg(short = 't', long)]
+    truncate_values: Option<u16>,
+
+    #[arg(short = 'T', long)]
+    no_truncate_long: bool,
+
+    #[arg(short = 'l', long)]
     line_numbers: bool,
 
+    #[arg(short = 'b', long)]
+    borders: bool,
 }
 
 #[derive(Debug)]
@@ -33,7 +41,7 @@ use ColumnType::*;
 struct Column {
     name: String,
     kind: ColumnType,
-    max_length: usize,
+    max_length: u16,
 }
 
 impl Column {
@@ -41,12 +49,12 @@ impl Column {
         Column {
             name: String::from(name.trim()),
             kind: Numeric,
-            max_length: name.len(),
+            max_length: name.len() as u16,
         }
     }
 
     fn update(&mut self, value: &str) {
-        self.max_length = std::cmp::max(self.max_length, value.len());
+        self.max_length = std::cmp::max(self.max_length, value.len() as u16);
         self.kind = match self.kind {
             Textual => Textual,
             Numeric => match value.parse::<f64>() {
@@ -62,19 +70,22 @@ struct DelimitedFile<T: BufRead> {
     cols: Vec<Column>,
     header_bytes: usize,
     header_repeat: Option<u16>,
-    max_value_length: Option <u16>,
+    max_value_length: Option<u16>,
+    borders: bool,
 }
 
 impl<T> DelimitedFile<T>
-    where T: BufRead + Seek,
+where
+    T: BufRead + Seek,
 {
     pub fn new(reader: T) -> Self {
         Self {
-            reader: reader,
+            reader,
             cols: Vec::new(),
             header_bytes: 0,
             header_repeat: None,
             max_value_length: None,
+            borders: false,
         }
     }
 
@@ -86,6 +97,10 @@ impl<T> DelimitedFile<T>
         self.max_value_length = max_value_length;
     }
 
+    fn set_borders(&mut self, borders: bool) {
+        self.borders = borders;
+    }
+
     fn line_parse(l: &str) -> Vec<String> {
         l.split('\t')
             .map(|s| String::from(s.trim()))
@@ -93,7 +108,9 @@ impl<T> DelimitedFile<T>
     }
 
     fn seek_to_data(&mut self) -> Result<()> {
-        let _ = self.reader.seek(SeekFrom::Start(self.header_bytes as u64))?;
+        let _ = self
+            .reader
+            .seek(SeekFrom::Start(self.header_bytes as u64))?;
         Ok(())
     }
 
@@ -130,19 +147,49 @@ impl<T> DelimitedFile<T>
 
     fn print_aligned_header(&mut self) -> Result<()> {
         let mut stdout = stdout().lock();
-        for col in &self.cols {
-            write!(stdout, "{}┼", "─".repeat(col.max_length))?;
+        if self.borders {
+            for col in &self.cols {
+                write!(stdout, "{}┼", "─".repeat(self.print_length(col)))?;
+            }
+            writeln!(stdout)?;
         }
-        writeln!(stdout)?;
         for col in &self.cols {
-            write!(stdout, "{:-width$}│", col.name, width = col.max_length)?;
+            write!(
+                stdout,
+                "{:-width$}",
+                self.format_value(&col.name, col),
+                width = self.print_length(col)
+            )?;
         }
-        writeln!(stdout)?;
-        for col in &self.cols {
-            write!(stdout, "{}┼", "─".repeat(col.max_length))?;
+        if self.borders {
+            writeln!(stdout)?;
+            for col in &self.cols {
+                write!(stdout, "{}┼", "─".repeat(self.print_length(col)))?;
+            }
+            writeln!(stdout)?;
         }
-        writeln!(stdout)?;
         Ok(())
+    }
+
+    fn print_length(&self, col: &Column) -> usize {
+        match self.max_value_length {
+            Some(length) => std::cmp::min(col.max_length, length) as usize,
+            None => col.max_length as usize,
+        }
+    }
+
+    fn format_value(&self, value: &str, col: &Column) -> String {
+        let print_length = self.print_length(col);
+        let truncated: &str = if print_length < value.len() {
+            &value[0..print_length]
+        } else {
+            value
+        };
+        let sep = if self.borders { "│" } else { " " };
+        match col.kind {
+            Textual => format!("{truncated:-print_length$}{sep}"),
+            Numeric => format!("{truncated:>-print_length$}{sep}"),
+        }
     }
 
     fn print_aligned_rows(&mut self) -> Result<()> {
@@ -155,22 +202,16 @@ impl<T> DelimitedFile<T>
                 break;
             }
             line_num += 1;
-            match self.header_repeat {
-                Some(hr) => if line_num % hr == hr {
-                    println!("here");
+            if let Some(hr) = self.header_repeat {
+                if line_num % hr == 0 {
                     self.print_aligned_header()?;
-                    ()
-                },
-                None => ()
+                }
             }
 
             let line = Self::line_parse(&line_str);
             for (i, value) in line.iter().enumerate() {
-                let col = self.cols.get(i).unwrap();
-                match col.kind {
-                    Textual => write!(stdout, "{:-width$}│", value, width = col.max_length)?,
-                    Numeric => write!(stdout, "{:>-width$}│", value, width = col.max_length)?,
-                }
+                let col = self.cols.get(i).expect("No column for i=");
+                write!(stdout, "{}", self.format_value(value, col))?;
             }
             writeln!(stdout)?;
             line_str.truncate(0);
@@ -181,7 +222,6 @@ impl<T> DelimitedFile<T>
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    println!("{:?}", args);
     //let rows = match termsize::get() {
     //    Some(size) => Some(size.rows),
     //    None => Some(args.header_repeat),
@@ -190,14 +230,23 @@ fn main() -> Result<()> {
     let reader = match File::open(args.filename).map(BufReader::new) {
         Ok(file) => file,
         Err(err) => {
-            eprintln!("Could no open file: {}", err);
+            eprintln!("Could no open file: {err}");
             exit(1);
         }
     };
 
     let mut dfile = DelimitedFile::new(reader);
-    dfile.set_header_repeat(Some(args.header_repeat));
-    dfile.set_max_value_length(Some(args.max_value_length));
+    dfile.set_header_repeat(if args.no_header_repeat {
+        None
+    } else {
+        Some(args.header_repeat)
+    });
+    dfile.set_max_value_length(if args.no_truncate_long {
+        None
+    } else {
+        args.truncate_values
+    });
+    dfile.set_borders(args.borders);
     dfile.read_headers()?;
     dfile.analyze_rows()?;
     dfile.seek_to_data()?;
