@@ -266,3 +266,36 @@ fn main() -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_column() {
+        let mut text_column = Column {
+            name: "Test Col".to_string(),
+            kind: Textual,
+            max_length: 0,
+        };
+        text_column.update("1234");
+        assert_eq!(text_column.max_length, 4);
+        text_column.update("12345678");
+        assert_eq!(text_column.max_length, 8);
+    }
+
+    #[test]
+    fn test_print_length() {
+        use std::io::Cursor;
+
+        let buff = Cursor::new("header1\theader2\nvalue1\tvalue2\n");
+        let mut dfile = DelimitedFile::new(buff);
+        dfile.set_max_value_length(Some(4));
+        dfile.read_headers().unwrap();
+        assert_eq!(dfile.cols.len(), 2);
+        dfile.analyze_rows().unwrap();
+        assert_eq!(dfile.print_length(&dfile.cols[0]), 4);
+        dfile.set_max_value_length(Some(40));
+        assert_eq!(dfile.print_length(&dfile.cols[0]), 7);
+    }
+}
