@@ -298,5 +298,4 @@ mod tests {
         dfile.set_max_value_length(Some(40));
         assert_eq!(dfile.print_length(&dfile.cols[0]), 7);
     }
-
 }
