@@ -69,9 +69,11 @@ struct DelimitedFile<T: BufRead> {
     reader: T,
     cols: Vec<Column>,
     header_bytes: usize,
+    lines: usize,
     header_repeat: Option<u16>,
     max_value_length: Option<u16>,
     borders: bool,
+    line_numbers: bool,
 }
 
 impl<T> DelimitedFile<T>
@@ -83,9 +85,11 @@ where
             reader,
             cols: Vec::new(),
             header_bytes: 0,
+            lines: 0,
             header_repeat: None,
             max_value_length: None,
             borders: false,
+            line_numbers: false,
         }
     }
 
@@ -99,6 +103,10 @@ where
 
     fn set_borders(&mut self, borders: bool) {
         self.borders = borders;
+    }
+
+    fn set_line_numbers(&mut self, line_numbers: bool) {
+        self.line_numbers = line_numbers;
     }
 
     fn line_parse(l: &str) -> Vec<String> {
@@ -130,10 +138,12 @@ where
     // Read the file, noting size and type of all the data
     fn analyze_rows(&mut self) -> Result<()> {
         let mut line_str = String::new();
+        self.lines = 0;
         while let Ok(bytes) = self.reader.read_line(&mut line_str) {
             if bytes == 0 {
                 break;
             }
+            self.lines += 1;
             let line = Self::line_parse(&line_str);
             for (i, value) in line.iter().enumerate() {
                 if let Some(col) = self.cols.get_mut(i) {
@@ -142,31 +152,44 @@ where
             }
             line_str = String::new();
         }
+        if self.line_numbers {
+            let line_col = Column {
+                name: String::from("#"),
+                kind: Numeric,
+                max_length: self.lines.ilog10() as u16 + 1,
+            };
+            self.cols.splice(0..0, vec![line_col]);
+        }
+        Ok(())
+    }
+
+    fn print_header_border(&self) -> Result<()> {
+        let mut stdout = stdout().lock();
+        for col in &self.cols {
+            write!(stdout, "{}┼", "─".repeat(self.print_length(col)))?;
+        }
+        writeln!(stdout)?;
         Ok(())
     }
 
     fn print_aligned_header(&mut self) -> Result<()> {
-        let mut stdout = stdout().lock();
         if self.borders {
+            self.print_header_border()?;
+        }
+        {
+            let mut stdout = stdout().lock();
             for col in &self.cols {
-                write!(stdout, "{}┼", "─".repeat(self.print_length(col)))?;
+                write!(
+                    stdout,
+                    "{:-width$}",
+                    self.format_value(&col.name, col),
+                    width = self.print_length(col)
+                )?;
             }
             writeln!(stdout)?;
         }
-        for col in &self.cols {
-            write!(
-                stdout,
-                "{:-width$}",
-                self.format_value(&col.name, col),
-                width = self.print_length(col)
-            )?;
-        }
         if self.borders {
-            writeln!(stdout)?;
-            for col in &self.cols {
-                write!(stdout, "{}┼", "─".repeat(self.print_length(col)))?;
-            }
-            writeln!(stdout)?;
+            self.print_header_border()?;
         }
         Ok(())
     }
@@ -209,8 +232,20 @@ where
             }
 
             let line = Self::line_parse(&line_str);
+            let mut col_offset = 0usize;
+            if self.line_numbers {
+                write!(
+                    stdout,
+                    "{}",
+                    self.format_value(
+                        &line_num.to_string(),
+                        self.cols.get(0).expect("No line number col")
+                    )
+                )?;
+                col_offset = 1;
+            }
             for (i, value) in line.iter().enumerate() {
-                let col = self.cols.get(i).expect("No column for i=");
+                let col = self.cols.get(i + col_offset).expect("No column for i=");
                 write!(stdout, "{}", self.format_value(value, col))?;
             }
             writeln!(stdout)?;
@@ -247,6 +282,7 @@ fn main() -> Result<()> {
         args.truncate_values
     });
     dfile.set_borders(args.borders);
+    dfile.set_line_numbers(args.line_numbers);
     dfile.read_headers()?;
     dfile.analyze_rows()?;
     dfile.seek_to_data()?;
